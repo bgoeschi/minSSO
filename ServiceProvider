@@ -1,0 +1,154 @@
+<?php
+
+class ServiceProvider {
+
+    // the keys
+    private $idp_public_key = "";
+    private $sp_private_key = "";
+
+    // cryptographic attributes with default values
+    private $signature_mode = "RSA-SHA256";
+    private $encryption_mode = MCRYPT_RIJNDAEL_256;
+    private $block_mode = MCRYPT_MODE_CBC;
+    private $iv_start = 0;
+    private $iv_length = 32;
+
+
+    /**
+     * @summary
+     *      method called by SP when user is not yet authenticated
+     *      build nonce & return_url for redirect
+     * @param $return_url
+     *      the url that should be called after the user has authenticated at the IDP
+     * @return array|bool
+     *      'nonce' => unencrypted nonce
+     *      'c_nonce' => encrypted nonce for passing
+     *      'c_return_url' => encrypted return url for passing
+     *
+     *      return false on error
+     */
+    function prepare_redirect($idp_public_key, $return_url) {
+        $this->set_public_key($idp_public_key);
+        $nonce = $this->build_nonce();
+        $c_url = $this->build_return_url($return_url);
+
+        if($nonce && $c_url) {
+            return array(
+                "nonce" => $nonce['nonce'],
+                "c_nonce" => $nonce['c_nonce'],
+                "c_return_url" => $c_url
+            );
+        } else {
+            return false;
+        }
+    }
+
+    /**
+     * @summary
+     *      method called by SP after user has authenticated to IDP
+     *      check authentication from IDP and get user infos
+     * @param $idp_public_key
+     * @param $sp_private_key
+     * @param $initial_nonce
+     * @param $c_nonce
+     * @param $c_user
+     * @param $signature
+     * @return bool|string
+     *      json string which might contain user infos
+     *      return false if authentication is not valid or error occurs
+     */
+    function check_authentication($idp_public_key, $sp_private_key, $initial_nonce, $c_nonce, $c_user, $signature) {
+        $this->set_public_key($idp_public_key);
+        $this->set_private_key($sp_private_key);
+        $nonce = $this->set_nonce_from_cypher($c_nonce);
+        $return_value = false;
+
+        if($this->check_nonce($initial_nonce, $nonce)) {
+            $user_info = $this->set_user_from_cypher($c_user, $nonce);
+
+            if($this->check_user($user_info, $signature) == 1) {
+                $return_value = $user_info;
+            }
+        }
+
+        // return json string of user or false on error
+        return $return_value;
+    }
+
+    /*
+     * helper functions to set the cryptographic keys
+     */
+    function set_private_key($key_stream) {
+        $this->sp_private_key = openssl_get_privatekey($key_stream);
+    }
+
+    function set_public_key($key_stream) {
+        $this->idp_public_key = openssl_get_publickey($key_stream);
+    }
+
+    /*
+     * helper functions for preparing the redirect to IDP
+     */
+    function build_nonce() {
+        $nonce = bin2hex(openssl_random_pseudo_bytes(16));
+        openssl_public_encrypt($nonce, $c_nonce, $this->idp_public_key);
+
+        return array(
+            "nonce" => $nonce,
+            "c_nonce" => base64_encode($c_nonce)
+        );
+    }
+
+    function build_return_url($return_url) {
+        openssl_public_encrypt($return_url, $c_return_url, $this->idp_public_key);
+        return base64_encode($c_return_url);
+    }
+
+    /*
+     * helper functions to check authentication from IDP
+     */
+    function set_nonce_from_cypher($c_nonce) {
+        openssl_private_decrypt(base64_decode($c_nonce), $nonce, $this->sp_private_key);
+        return $nonce;
+    }
+
+    function check_nonce($initial_nonce, $nonce) {
+        return $initial_nonce === $nonce;
+    }
+
+    function set_user_from_cypher($c_user, $nonce) {
+        $iv = substr(md5($nonce), $this->iv_start, $this->iv_length);
+        $user_info = mcrypt_decrypt($this->encryption_mode, $nonce, base64_decode($c_user), $this->block_mode, $iv);
+
+        // get rid of invisible characters
+        return preg_replace('/[\x00-\x1F]/', '', $user_info);
+    }
+
+    function check_user($user_info, $signature) {
+        return openssl_verify($user_info, base64_decode($signature), $this->idp_public_key, $this->signature_mode);
+    }
+
+    /*
+     * Setter for encryption configuration
+     */
+    public function setSignatureMode($signature_mode) {
+        $this->signature_mode = $signature_mode;
+    }
+
+    public function setEncryptionMode($encryption_mode) {
+        $this->encryption_mode = $encryption_mode;
+    }
+
+    public function setBlockMode($block_mode) {
+        $this->block_mode = $block_mode;
+    }
+
+    public function setIvStart($iv_start) {
+        $this->iv_start = $iv_start;
+    }
+
+    public function setIvLength($iv_length) {
+        $this->iv_length = $iv_length;
+    }
+
+}
