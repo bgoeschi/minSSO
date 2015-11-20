@@ -1,4 +1,5 @@
 <?php
+// author: sgoettfert, bgoeschi
 
 class IdentityProvider {
 
@@ -108,6 +109,5 @@ class IdentityProvider {
     public function setIvLength($iv_length) {
         $this->iv_length = $iv_length;
     }
-
 
 }
